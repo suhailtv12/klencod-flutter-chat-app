@@ -1,0 +1,51 @@
+name: chat_app
+description: A secure, real-time, end-to-end encrypted chat application built with Flutter.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # 1. التخزين المحلي وإدارة الحسابات وقوائم الحظر
+  shared_preferences: ^2.2.2
+
+  # 2. بروتوكول الاتصال اللحظي وإرسال واستقبال الرسائل عبر السيرفر
+  web_socket_channel: ^3.0.1
+  http: ^1.2.2
+
+  # 3. إدارة أذونات النظام للمكالمات (الكاميرا، الميكروفون، التخزين)
+  permission_handler: ^11.3.1
+
+  # 4. التشفير التام وحماية البيانات (E2EE & AES-256)
+  encrypt: ^5.0.3
+  crypto: ^3.0.3
+
+  # 5. تنسيق التواريخ، أوقات الرسائل، ودعم اللغة العربية
+  intl: ^0.19.0
+
+  # 6. الأيقونات والتصميم المتقدم
+  cupertino_icons: ^1.0.8
+
+  # ===============================================================
+  # مكتبات المكالمات المباشرة (اختياري - قم بإلغاء التعليق عند تفعيل البث المباشر):
+  # agora_rtc_engine: ^6.3.2    # لمحرك مكالمات الصوت والفيديو السحابي
+  # flutter_webrtc: ^0.10.6      # لمحرك WebRTC المفتوح والمجاني P2P
+  # ===============================================================
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+
+  # لتضمين صور أو خطوط خاصة بالتطبيق مستقبلاً:
+  # assets:
+  #   - assets/images/
