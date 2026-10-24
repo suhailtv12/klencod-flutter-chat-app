@@ -1,7 +1,12 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'call_screen.dart'; // استدعاء شاشة الاتصال التي تحتوي على الـ App ID الخاص بك
+import 'package:agora_rtc_engine/agora_rtc_engine.dart';
+import 'package:permission_handler/permission_handler.dart';
+
+// مُعرّف مشروع Agora الخاص بك
+const String agoraAppId = "2a0053e48b774c279c834793732a7493";
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -36,7 +41,7 @@ class RealChatApp extends StatelessWidget {
 }
 
 // -------------------------------------------------------------
-// 1. شاشة البداية: فحص هل سجلت يوزر مسبقاً؟
+// 1. شاشة البداية: فحص هل تم تسجيل يوزر مسبقاً
 // -------------------------------------------------------------
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -60,7 +65,6 @@ class _SplashScreenState extends State<SplashScreen> {
     if (!mounted) return;
 
     if (savedUsername != null && savedUsername.isNotEmpty) {
-      // المستخدم مسجل مسبقاً -> الانتقال للشاشة الرئيسية
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
@@ -71,7 +75,6 @@ class _SplashScreenState extends State<SplashScreen> {
         ),
       );
     } else {
-      // مستخدم جديد -> شاشة إنشاء اليوزر
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(
@@ -95,7 +98,7 @@ class _SplashScreenState extends State<SplashScreen> {
 }
 
 // -------------------------------------------------------------
-// 2. شاشة إنشاء وضبط الـ Username
+// 2. شاشة تسجيل اسم المستخدم (Username)
 // -------------------------------------------------------------
 class UsernameRegisterScreen extends StatefulWidget {
   const UsernameRegisterScreen({super.key});
@@ -108,7 +111,6 @@ class _UsernameRegisterScreenState extends State<UsernameRegisterScreen> {
   final TextEditingController _usernameController = TextEditingController();
   String? _errorMessage;
 
-  // التحقق من صحة صيغة اسم المستخدم
   bool _validateUsername(String username) {
     final validCharacters = RegExp(r'^[a-z0-9_]{3,20}$');
     return validCharacters.hasMatch(username);
@@ -119,7 +121,7 @@ class _UsernameRegisterScreenState extends State<UsernameRegisterScreen> {
 
     if (!_validateUsername(username)) {
       setState(() {
-        _errorMessage = 'يجب أن يتكون اليوزر من 3-20 حرفاً (أحرف إنجليزية صغيرة، أرقام، أو _ فقط)';
+        _errorMessage = 'اليوزر يجب أن يكون 3-20 حرفاً (أحرف إنجليزية صغيرة، أرقام، أو _ فقط)';
       });
       return;
     }
@@ -163,7 +165,7 @@ class _UsernameRegisterScreenState extends State<UsernameRegisterScreen> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'سيتمكن أصدقاؤك من الاتصال بك ومراسلتك من خلال هذا اليوزر',
+                'سيتمكن أصدقاؤك من مراسلتك والاتصال بك عبر هذا اليوزر',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.white60, fontSize: 13),
               ),
@@ -207,7 +209,7 @@ class _UsernameRegisterScreenState extends State<UsernameRegisterScreen> {
 }
 
 // -------------------------------------------------------------
-// 3. الشاشة الرئيسية: البحث والتواصل مع أي يوزر
+// 3. الشاشة الرئيسية: البحث باليوزر وإدارة المحادثات
 // -------------------------------------------------------------
 class HomeScreen extends StatefulWidget {
   final String myUsername;
@@ -386,7 +388,7 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 // -------------------------------------------------------------
-// 4. شاشة الدردشة وتوليد رابط المكالمة المشتركة
+// 4. شاشة الدردشة
 // -------------------------------------------------------------
 class ChatScreen extends StatefulWidget {
   final String myUsername;
@@ -470,9 +472,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _saveChatHistory();
   }
 
-  // توليد غرفة الاتصال المشتركة وفتح شاشة المكالمات Agora
   void _openCall(bool isVideo) {
-    // خوارزمية الترتيب الأبجدي لضمان دخول الطرفين نفس اسم الغرفة في Agora تماماً
     List<String> users = [widget.myUsername, widget.targetUsername]..sort();
     String channelName = "call_${users[0]}_${users[1]}";
 
@@ -554,7 +554,6 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: [
-          // شريط الأمان عند المراسلة لأول مرة
           if (isFirstTime)
             Container(
               padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
@@ -562,7 +561,7 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Column(
                 children: [
                   Text(
-                    'هذه أول محادثة بينك وبين @${widget.targetUsername}. تأكد من هوية الشخص قبل مشاركة أي معلومات حساسة.',
+                    'هذه أول محادثة مع @${widget.targetUsername}. يرجى توخي الحذر قبل مشاركة أي معلومات سرية.',
                     style: const TextStyle(fontSize: 12, color: Colors.white70),
                     textAlign: TextAlign.center,
                   ),
@@ -596,8 +595,6 @@ class _ChatScreenState extends State<ChatScreen> {
                 ],
               ),
             ),
-
-          // عرض الرسائل
           Expanded(
             child: ListView.builder(
               padding: const EdgeInsets.all(12),
@@ -630,8 +627,6 @@ class _ChatScreenState extends State<ChatScreen> {
               },
             ),
           ),
-
-          // إدخال الرسائل
           Container(
             padding: const EdgeInsets.all(8),
             color: const Color(0xFF1F2C34),
@@ -671,5 +666,244 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
     );
+  }
+}
+
+// -------------------------------------------------------------
+// 5. شاشة المكالمات المباشرة بنظام Agora RTC المدمج
+// -------------------------------------------------------------
+class RealCallScreen extends StatefulWidget {
+  final String channelName;
+  final String targetUsername;
+  final bool isVideo;
+
+  const RealCallScreen({
+    super.key,
+    required this.channelName,
+    required this.targetUsername,
+    required this.isVideo,
+  });
+
+  @override
+  State<RealCallScreen> createState() => _RealCallScreenState();
+}
+
+class _RealCallScreenState extends State<RealCallScreen> {
+  int? _remoteUid;
+  bool _localUserJoined = false;
+  bool _isMuted = false;
+  late RtcEngine _engine;
+
+  @override
+  void initState() {
+    super.initState();
+    _initAgora();
+  }
+
+  Future<void> _initAgora() async {
+    await [
+      Permission.microphone,
+      if (widget.isVideo) Permission.camera,
+    ].request();
+
+    _engine = createAgoraRtcEngine();
+    await _engine.initialize(const RtcEngineContext(
+      appId: agoraAppId,
+      channelProfile: ChannelProfileType.channelProfileCommunication,
+    ));
+
+    _engine.registerEventHandler(
+      RtcEngineEventHandler(
+        onJoinChannelSuccess: (RtcConnection connection, int elapsed) {
+          debugPrint("انضم للمكالمة بنجاح: ${connection.channelId}");
+          if (mounted) {
+            setState(() {
+              _localUserJoined = true;
+            });
+          }
+        },
+        onUserJoined: (RtcConnection connection, int remoteUid, int elapsed) {
+          debugPrint("انضم الطرف الآخر: $remoteUid");
+          if (mounted) {
+            setState(() {
+              _remoteUid = remoteUid;
+            });
+          }
+        },
+        onUserOffline: (RtcConnection connection, int remoteUid, UserOfflineReasonType reason) {
+          debugPrint("غادر الطرف الآخر المكالمة");
+          if (mounted) {
+            setState(() {
+              _remoteUid = null;
+            });
+            Navigator.pop(context);
+          }
+        },
+        onError: (ErrorCodeType err, String msg) {
+          debugPrint("Agora Error [$err]: $msg");
+        },
+      ),
+    );
+
+    if (widget.isVideo) {
+      await _engine.enableVideo();
+      await _engine.startPreview();
+    } else {
+      await _engine.enableAudio();
+    }
+
+    await _engine.joinChannel(
+      token: '',
+      channelId: widget.channelName,
+      options: ChannelMediaOptions(
+        clientRoleType: ClientRoleType.clientRoleBroadcaster,
+        channelProfile: ChannelProfileType.channelProfileCommunication,
+        publishCameraTrack: widget.isVideo,
+        publishMicrophoneTrack: true,
+      ),
+      uid: 0,
+    );
+  }
+
+  @override
+  void dispose() {
+    _leaveChannel();
+    super.dispose();
+  }
+
+  Future<void> _leaveChannel() async {
+    try {
+      await _engine.leaveChannel();
+      await _engine.release();
+    } catch (e) {
+      debugPrint("Error leaving channel: $e");
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B141B),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        title: Text(widget.isVideo ? 'مكالمة فيديو مشفرة' : 'مكالمة صوتية مشفرة'),
+        centerTitle: true,
+      ),
+      body: SafeArea(
+        child: Stack(
+          children: [
+            Center(
+              child: _remoteVideoOrVoiceUI(),
+            ),
+            if (widget.isVideo && _localUserJoined)
+              Positioned(
+                top: 20,
+                right: 20,
+                child: SizedBox(
+                  width: 110,
+                  height: 155,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: AgoraVideoView(
+                      controller: VideoViewController(
+                        rtcEngine: _engine,
+                        canvas: const VideoCanvas(uid: 0),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            Positioned(
+              bottom: 30,
+              left: 0,
+              right: 0,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  CircleAvatar(
+                    backgroundColor: _isMuted ? Colors.red : Colors.white24,
+                    radius: 26,
+                    child: IconButton(
+                      icon: Icon(_isMuted ? Icons.mic_off : Icons.mic, color: Colors.white),
+                      onPressed: () {
+                        setState(() => _isMuted = !_isMuted);
+                        _engine.muteLocalAudioStream(_isMuted);
+                      },
+                    ),
+                  ),
+                  CircleAvatar(
+                    backgroundColor: Colors.red,
+                    radius: 32,
+                    child: IconButton(
+                      icon: const Icon(Icons.call_end, color: Colors.white, size: 30),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ),
+                  if (widget.isVideo)
+                    CircleAvatar(
+                      backgroundColor: Colors.white24,
+                      radius: 26,
+                      child: IconButton(
+                        icon: const Icon(Icons.switch_camera, color: Colors.white),
+                        onPressed: () => _engine.switchCamera(),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _remoteVideoOrVoiceUI() {
+    if (_remoteUid != null) {
+      if (widget.isVideo) {
+        return AgoraVideoView(
+          controller: VideoViewController.remote(
+            rtcEngine: _engine,
+            canvas: VideoCanvas(uid: _remoteUid),
+            connection: RtcConnection(channelId: widget.channelName),
+          ),
+        );
+      } else {
+        return Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircleAvatar(
+              radius: 50,
+              backgroundColor: const Color(0xFF00A884),
+              child: Text(
+                widget.targetUsername[0].toUpperCase(),
+                style: const TextStyle(fontSize: 40, color: Colors.black, fontWeight: FontWeight.bold),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text('@${widget.targetUsername}', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            const Text('المكالمة متصلة ومباشرة 🔒', style: TextStyle(color: Color(0xFF00A884))),
+          ],
+        );
+      }
+    } else {
+      return Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const CircularProgressIndicator(color: Color(0xFF00A884)),
+          const SizedBox(height: 20),
+          Text(
+            'جاري الاتصال بـ @${widget.targetUsername}...',
+            style: const TextStyle(fontSize: 16, color: Colors.white70),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'في انتظار دخول الطرف الآخر للغرفة',
+            style: TextStyle(fontSize: 12, color: Colors.white38),
+          ),
+        ],
+      );
+    }
   }
 }
