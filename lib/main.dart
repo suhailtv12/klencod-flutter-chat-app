@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:agora_rtc_engine/agora_rtc_engine.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -41,7 +43,54 @@ class RealChatApp extends StatelessWidget {
 }
 
 // -------------------------------------------------------------
-// 1. شاشة البداية: فحص هل تم تسجيل يوزر مسبقاً
+// إدارة المستخدمين المسجلين (سجل مركزي محلي وسحابي)
+// -------------------------------------------------------------
+class UserService {
+  // قائمة أولية لمستخدمين افتراضيين للتجربة
+  static const List<String> defaultRegisteredUsers = [
+    'admin',
+    'sara_vip',
+    'ahmed_dev',
+    'omar99',
+    'khaled_pro'
+  ];
+
+  static Future<List<String>> getAllRegisteredUsers() async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> customUsers = prefs.getStringList('global_registered_users') ?? [];
+    Set<String> allUsers = {...defaultRegisteredUsers, ...customUsers};
+    return allUsers.toList();
+  }
+
+  static Future<bool> isUsernameTaken(String username) async {
+    final users = await getAllRegisteredUsers();
+    return users.contains(username.toLowerCase());
+  }
+
+  static Future<void> registerNewUser(String username) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> customUsers = prefs.getStringList('global_registered_users') ?? [];
+    if (!customUsers.contains(username.toLowerCase())) {
+      customUsers.add(username.toLowerCase());
+      await prefs.setStringList('global_registered_users', customUsers);
+    }
+  }
+
+  // توليد اقتراحات ذكية واحترافية عند حجز الاسم
+  static List<String> generateSmartSuggestions(String baseUsername) {
+    final rand = Random();
+    final clean = baseUsername.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '');
+    return [
+      '${clean}_vip',
+      '${clean}_pro',
+      '${clean}_${rand.nextInt(89) + 10}',
+      'the_${clean}',
+    ];
+  }
+}
+
+// -------------------------------------------------------------
+// 1. شاشة البداية
 // -------------------------------------------------------------
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -61,7 +110,7 @@ class _SplashScreenState extends State<SplashScreen> {
     final prefs = await SharedPreferences.getInstance();
     final savedUsername = prefs.getString('my_username');
 
-    await Future.delayed(const Duration(milliseconds: 500));
+    await Future.delayed(const Duration(milliseconds: 600));
     if (!mounted) return;
 
     if (savedUsername != null && savedUsername.isNotEmpty) {
@@ -98,7 +147,7 @@ class _SplashScreenState extends State<SplashScreen> {
 }
 
 // -------------------------------------------------------------
-// 2. شاشة تسجيل اسم المستخدم (Username)
+// 2. شاشة تسجيل اليوزر مع التحقق الذكي والاقتراحات التلقائية
 // -------------------------------------------------------------
 class UsernameRegisterScreen extends StatefulWidget {
   const UsernameRegisterScreen({super.key});
@@ -109,23 +158,55 @@ class UsernameRegisterScreen extends StatefulWidget {
 
 class _UsernameRegisterScreenState extends State<UsernameRegisterScreen> {
   final TextEditingController _usernameController = TextEditingController();
-  String? _errorMessage;
+  bool _isChecking = false;
+  bool _isAvailable = false;
+  String? _statusMessage;
+  List<String> _suggestions = [];
 
-  bool _validateUsername(String username) {
-    final validCharacters = RegExp(r'^[a-z0-9_]{3,20}$');
-    return validCharacters.hasMatch(username);
+  bool _validateFormat(String username) {
+    return RegExp(r'^[a-z0-9_]{3,20}$').hasMatch(username);
   }
 
-  Future<void> _submitUsername() async {
-    final username = _usernameController.text.trim().toLowerCase();
-
-    if (!_validateUsername(username)) {
+  Future<void> _checkAvailability(String username) async {
+    username = username.trim().toLowerCase();
+    if (!_validateFormat(username)) {
       setState(() {
-        _errorMessage = 'اليوزر يجب أن يكون 3-20 حرفاً (أحرف إنجليزية صغيرة، أرقام، أو _ فقط)';
+        _isAvailable = false;
+        _statusMessage = 'اليوزر يجب أن يتكون من 3-20 حرفاً (أحرف إنجليزية صغيرة، أرقام، أو _ فقط)';
+        _suggestions = [];
       });
       return;
     }
 
+    setState(() {
+      _isChecking = true;
+      _statusMessage = null;
+    });
+
+    final isTaken = await UserService.isUsernameTaken(username);
+
+    setState(() {
+      _isChecking = false;
+      if (isTaken) {
+        _isAvailable = false;
+        _statusMessage = 'اسم المستخدم محجوز بالفعل ❌ اختر من الاقتراحات أدناه:';
+        _suggestions = UserService.generateSmartSuggestions(username);
+      } else {
+        _isAvailable = true;
+        _statusMessage = 'اسم المستخدم متاح ومميز جاهز للحجز ✅';
+        _suggestions = [];
+      }
+    });
+  }
+
+  Future<void> _submitRegister() async {
+    final username = _usernameController.text.trim().toLowerCase();
+    if (!_isAvailable) {
+      await _checkAvailability(username);
+      if (!_isAvailable) return;
+    }
+
+    await UserService.registerNewUser(username);
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('my_username', username);
 
@@ -156,29 +237,50 @@ class _UsernameRegisterScreenState extends State<UsernameRegisterScreen> {
                   shape: BoxShape.circle,
                   color: const Color(0xFF00A884).withOpacity(0.15),
                 ),
-                child: const Icon(Icons.alternate_email_rounded, size: 64, color: Color(0xFF00A884)),
+                child: const Icon(Icons.account_circle_outlined, size: 68, color: Color(0xFF00A884)),
               ),
               const SizedBox(height: 20),
               const Text(
-                'اختر اسم المستخدم الخاص بك',
+                'اختر اسم المستخدم الفريد الخاص بك',
                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 8),
               const Text(
-                'سيتمكن أصدقاؤك من مراسلتك والاتصال بك عبر هذا اليوزر',
+                'سيتم فحص الاسم والتأكد من عدم تكراره واقتراح بدائل حصرية لك',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.white60, fontSize: 13),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 25),
               TextField(
                 controller: _usernameController,
                 style: const TextStyle(letterSpacing: 1.2),
+                onChanged: (val) {
+                  if (val.length >= 3) {
+                    _checkAvailability(val);
+                  } else {
+                    setState(() {
+                      _isAvailable = false;
+                      _statusMessage = null;
+                      _suggestions = [];
+                    });
+                  }
+                },
                 decoration: InputDecoration(
                   prefixText: '@ ',
                   prefixStyle: const TextStyle(color: Color(0xFF00A884), fontWeight: FontWeight.bold, fontSize: 18),
-                  hintText: 'user_name',
-                  errorText: _errorMessage,
-                  errorMaxLines: 2,
+                  hintText: 'username',
+                  suffixIcon: _isChecking
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: Padding(
+                            padding: EdgeInsets.all(12),
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF00A884)),
+                          ),
+                        )
+                      : (_isAvailable
+                          ? const Icon(Icons.check_circle, color: Color(0xFF00A884))
+                          : null),
                   filled: true,
                   fillColor: const Color(0xFF1F2C34),
                   border: OutlineInputBorder(
@@ -187,16 +289,48 @@ class _UsernameRegisterScreenState extends State<UsernameRegisterScreen> {
                   ),
                 ),
               ),
-              const SizedBox(height: 20),
+              if (_statusMessage != null) ...[
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    _statusMessage!,
+                    style: TextStyle(
+                      color: _isAvailable ? const Color(0xFF00A884) : Colors.redAccent,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+              if (_suggestions.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: _suggestions.map((suggested) {
+                    return ActionChip(
+                      backgroundColor: const Color(0xFF1F2C34),
+                      side: const BorderSide(color: Color(0xFF00A884), width: 0.8),
+                      avatar: const Icon(Icons.auto_awesome, size: 14, color: Color(0xFF00A884)),
+                      label: Text('@$suggested', style: const TextStyle(fontSize: 12, color: Colors.white)),
+                      onPressed: () {
+                        _usernameController.text = suggested;
+                        _checkAvailability(suggested);
+                      },
+                    );
+                  }).toList(),
+                ),
+              ],
+              const SizedBox(height: 24),
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF00A884),
                   minimumSize: const Size.fromHeight(50),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                 ),
-                onPressed: _submitUsername,
+                onPressed: _isAvailable ? _submitRegister : null,
                 child: const Text(
-                  'تأكيد والدخول',
+                  'تأكيد والدخول للدردشة',
                   style: TextStyle(color: Colors.black, fontSize: 16, fontWeight: FontWeight.bold),
                 ),
               ),
@@ -209,7 +343,7 @@ class _UsernameRegisterScreenState extends State<UsernameRegisterScreen> {
 }
 
 // -------------------------------------------------------------
-// 3. الشاشة الرئيسية: البحث باليوزر وإدارة المحادثات
+// 3. الشاشة الرئيسية والتحقق من وجود المستخدم عند البحث
 // -------------------------------------------------------------
 class HomeScreen extends StatefulWidget {
   final String myUsername;
@@ -227,6 +361,8 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadData();
+    // تسجيل المستخدم الحالي في قائمة المستخدمين إن لم يكن موجوداً
+    UserService.registerNewUser(widget.myUsername);
   }
 
   Future<void> _loadData() async {
@@ -237,6 +373,7 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  // ميزة التحقق من وجود المستخدم قبل الدخول للمحادثة
   void _searchUserDialog() {
     final searchCtrl = TextEditingController();
 
@@ -246,13 +383,20 @@ class _HomeScreenState extends State<HomeScreen> {
         textDirection: TextDirection.rtl,
         child: AlertDialog(
           backgroundColor: const Color(0xFF1F2C34),
-          title: const Text('بدء محادثة باسم المستخدم'),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(
+            children: [
+              Icon(Icons.person_search, color: Color(0xFF00A884)),
+              SizedBox(width: 8),
+              Text('بحث عن مستخدم', style: TextStyle(fontSize: 16)),
+            ],
+          ),
           content: TextField(
             controller: searchCtrl,
             autofocus: true,
             decoration: const InputDecoration(
-              hintText: 'اكتب يوزر الشخص (مثلاً: sara)',
-              prefixIcon: Icon(Icons.person_search, color: Color(0xFF00A884)),
+              hintText: 'اكتب يوزر الشخص (مثلاً: sara_vip)',
+              prefixText: '@ ',
             ),
           ),
           actions: [
@@ -268,7 +412,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 if (targetUser == widget.myUsername) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('لا يمكنك بدء محادثة مع نفسك!')),
+                    const SnackBar(content: Text('لا يمكنك مراسلة نفسك!')),
                   );
                   return;
                 }
@@ -280,13 +424,50 @@ class _HomeScreenState extends State<HomeScreen> {
                   return;
                 }
 
+                // التحقق هل اليوزر مسجل في التطبيق فعلاً أم لا
+                final isRegistered = await UserService.isUsernameTaken(targetUser);
+                if (!ctx.mounted) return;
                 Navigator.pop(ctx);
-                _openChat(targetUser);
+
+                if (isRegistered) {
+                  // مسجل -> يدخله الدردشة طوالي
+                  _openChat(targetUser);
+                } else {
+                  // غير مسجل -> إظهار تنبيه
+                  _showUserNotFoundDialog(targetUser);
+                }
               },
-              child: const Text('مراسلة', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+              child: const Text('مراسلة فورية', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showUserNotFoundDialog(String username) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1F2C34),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Row(
+          children: [
+            Icon(Icons.error_outline, color: Colors.redAccent),
+            SizedBox(width: 8),
+            Text('المستخدم غير موجود'),
+          ],
+        ),
+        content: Text(
+          'اليوزر @$username غير مسجل في التطبيق حتى الآن. تأكد من صحة الاسم أو اطلب منه الانضمام.',
+          style: const TextStyle(color: Colors.white70, fontSize: 13),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('حسناً', style: TextStyle(color: Color(0xFF00A884))),
+          ),
+        ],
       ),
     );
   }
@@ -308,10 +489,55 @@ class _HomeScreenState extends State<HomeScreen> {
           child: ChatScreen(
             myUsername: widget.myUsername,
             targetUsername: targetUser,
+            onSimulateIncomingCall: () {
+              // محاكاة إشعار مكالمة واردة من هذا الشخص
+              _showIncomingCallOverlay(targetUser, false);
+            },
           ),
         ),
       ),
     ).then((_) => _loadData());
+  }
+
+  // -------------------------------------------------------------
+  // ميزة إشعار المكالمات الواردة مع الرنين والاهتزاز
+  // -------------------------------------------------------------
+  void _showIncomingCallOverlay(String callerUsername, bool isVideo) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (context) => Directionality(
+          textDirection: TextDirection.rtl,
+          child: IncomingCallScreen(
+            callerUsername: callerUsername,
+            isVideo: isVideo,
+            onAccept: () {
+              Navigator.pop(context); // إغلاق شاشة الرنين
+              // فتح مكالمة Agora المباشرة
+              List<String> users = [widget.myUsername, callerUsername]..sort();
+              String channelName = "call_${users[0]}_${users[1]}";
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => Directionality(
+                    textDirection: TextDirection.rtl,
+                    child: RealCallScreen(
+                      channelName: channelName,
+                      targetUsername: callerUsername,
+                      isVideo: isVideo,
+                    ),
+                  ),
+                ),
+              );
+            },
+            onDecline: () {
+              Navigator.pop(context);
+            },
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -327,7 +553,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.search),
+            icon: const Icon(Icons.person_search),
             tooltip: 'ابحث عن يوزر',
             onPressed: _searchUserDialog,
           ),
@@ -354,7 +580,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Icon(Icons.person_add_alt_1_outlined, size: 70, color: Colors.grey.shade700),
                   const SizedBox(height: 14),
                   const Text(
-                    'لا توجد محادثات مفتوحة بعد\nاضغط على الزر بالأسفل واكتب يوزر الشخص لبدء الاتصال',
+                    'لا توجد محادثات مفتوحة بعد\nابحث باسم المستخدم للبدء أو اضغط الزر أدناه',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.white54, fontSize: 14),
                   ),
@@ -381,7 +607,7 @@ class _HomeScreenState extends State<HomeScreen> {
       floatingActionButton: FloatingActionButton(
         backgroundColor: const Color(0xFF00A884),
         onPressed: _searchUserDialog,
-        child: const Icon(Icons.person_search, color: Colors.black),
+        child: const Icon(Icons.chat_bubble, color: Colors.black),
       ),
     );
   }
@@ -393,11 +619,13 @@ class _HomeScreenState extends State<HomeScreen> {
 class ChatScreen extends StatefulWidget {
   final String myUsername;
   final String targetUsername;
+  final VoidCallback onSimulateIncomingCall;
 
   const ChatScreen({
     super.key,
     required this.myUsername,
     required this.targetUsername,
+    required this.onSimulateIncomingCall,
   });
 
   @override
@@ -536,12 +764,17 @@ class _ChatScreenState extends State<ChatScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('@${widget.targetUsername}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                const Text('مشفر طرف إلى طرف', style: TextStyle(fontSize: 10, color: Color(0xFF00A884))),
+                const Text('مشفر طرف إلى طرف 🔒', style: TextStyle(fontSize: 10, color: Color(0xFF00A884))),
               ],
             ),
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.ring_volume, color: Colors.amber),
+            tooltip: 'تجربة استقبال رنين المكالمة',
+            onPressed: widget.onSimulateIncomingCall,
+          ),
           IconButton(
             icon: const Icon(Icons.videocam_rounded),
             onPressed: () => _openCall(true),
@@ -561,7 +794,7 @@ class _ChatScreenState extends State<ChatScreen> {
               child: Column(
                 children: [
                   Text(
-                    'هذه أول محادثة مع @${widget.targetUsername}. يرجى توخي الحذر قبل مشاركة أي معلومات سرية.',
+                    'هذه أول محادثة مع @${widget.targetUsername}. يرجى توخي الحذر قبل مشاركة أي معلومات حساسة.',
                     style: const TextStyle(fontSize: 12, color: Colors.white70),
                     textAlign: TextAlign.center,
                   ),
@@ -670,7 +903,145 @@ class _ChatScreenState extends State<ChatScreen> {
 }
 
 // -------------------------------------------------------------
-// 5. شاشة المكالمات المباشرة بنظام Agora RTC المدمج
+// 5. شاشة الرنين والإشعار للمكالمة الواردة (Incoming Call Screen)
+// -------------------------------------------------------------
+class IncomingCallScreen extends StatefulWidget {
+  final String callerUsername;
+  final bool isVideo;
+  final VoidCallback onAccept;
+  final VoidCallback onDecline;
+
+  const IncomingCallScreen({
+    super.key,
+    required this.callerUsername,
+    required this.isVideo,
+    required this.onAccept,
+    required this.onDecline,
+  });
+
+  @override
+  State<IncomingCallScreen> createState() => _IncomingCallScreenState();
+}
+
+class _IncomingCallScreenState extends State<IncomingCallScreen> with SingleTickerProviderStateMixin {
+  late AnimationController _animController;
+  Timer? _ringVibrateTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 1),
+      lowerBound: 0.85,
+      upperBound: 1.15,
+    )..repeat(reverse: true);
+
+    // تكرار الاهتزاز لمحاكاة نغمة الرنين الفعالة
+    _ringVibrateTimer = Timer.periodic(const Duration(milliseconds: 1200), (_) {
+      HapticFeedback.vibrate();
+      SystemSound.play(SystemSoundType.click);
+    });
+  }
+
+  @override
+  void dispose() {
+    _animController.dispose();
+    _ringVibrateTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF0B141B),
+      body: SafeArea(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 60),
+              child: Column(
+                children: [
+                  ScaleTransition(
+                    scale: _animController,
+                    child: CircleAvatar(
+                      radius: 54,
+                      backgroundColor: const Color(0xFF00A884).withOpacity(0.3),
+                      child: CircleAvatar(
+                        radius: 46,
+                        backgroundColor: const Color(0xFF00A884),
+                        child: Text(
+                          widget.callerUsername[0].toUpperCase(),
+                          style: const TextStyle(fontSize: 38, color: Colors.black, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Text('@${widget.callerUsername}', style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(widget.isVideo ? Icons.videocam : Icons.call, color: const Color(0xFF00A884), size: 18),
+                      const SizedBox(width: 6),
+                      Text(
+                        widget.isVideo ? 'مكالمة فيديو واردة ومباشرة...' : 'مكالمة صوتية واردة ومباشرة...',
+                        style: const TextStyle(color: Colors.white70, fontSize: 14),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 60),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  Column(
+                    children: [
+                      CircleAvatar(
+                        radius: 34,
+                        backgroundColor: Colors.red,
+                        child: IconButton(
+                          iconSize: 32,
+                          icon: const Icon(Icons.call_end, color: Colors.white),
+                          onPressed: widget.onDecline,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text('رفض', style: TextStyle(color: Colors.white70)),
+                    ],
+                  ),
+                  Column(
+                    children: [
+                      CircleAvatar(
+                        radius: 34,
+                        backgroundColor: const Color(0xFF00A884),
+                        child: IconButton(
+                          iconSize: 32,
+                          icon: const Icon(Icons.call, color: Colors.black),
+                          onPressed: widget.onAccept,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      const Text('قبول', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// -------------------------------------------------------------
+// 6. شاشة المكالمات المباشرة Agora RTC
 // -------------------------------------------------------------
 class RealCallScreen extends StatefulWidget {
   final String channelName;
@@ -899,7 +1270,7 @@ class _RealCallScreenState extends State<RealCallScreen> {
           ),
           const SizedBox(height: 8),
           const Text(
-            'في انتظار دخول الطرف الآخر للغرفة',
+            'في انتظار رد ودخول الطرف الآخر',
             style: TextStyle(fontSize: 12, color: Colors.white38),
           ),
         ],
